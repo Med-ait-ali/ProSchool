@@ -1,0 +1,62 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuth()           { return request.auth != null; }
+    function isRole(role)       { return isAuth() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == role; }
+    function isAdmin()          { return isRole('admin'); }
+    function isTeacher()        { return isRole('teacher'); }
+    function isParent()         { return isRole('parent'); }
+    function sameSchool(schoolId) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == schoolId;
+    }
+
+    // Users — read own profile, admin reads all
+    match /users/{userId} {
+      allow read:   if isAuth() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAdmin();
+      allow update: if isAdmin() || request.auth.uid == userId;
+      allow delete: if isAdmin();
+    }
+
+    // Students — admin + teacher can manage, parent reads own child
+    match /students/{studentId} {
+      allow read:   if isAuth() && (isAdmin() || isTeacher() ||
+                       (isParent() && resource.data.parentId == request.auth.uid));
+      allow create: if isAdmin();
+      allow update: if isAdmin() || isTeacher();
+      allow delete: if isAdmin();
+    }
+
+    // Homework — teachers write, parents/all school members read
+    match /homework/{hwId} {
+      allow read:   if isAuth() && sameSchool(resource.data.schoolId);
+      allow create: if isTeacher() || isAdmin();
+      allow update: if isTeacher() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Announcements — admin posts, all school members read + mark read
+    match /announcements/{annId} {
+      allow read:   if isAuth() && sameSchool(resource.data.schoolId);
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin() || isTeacher() ||
+                       (isParent() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']));
+      allow delete: if isAdmin();
+    }
+
+    // Classes — admin manages, teachers and parents read
+    match /classes/{classId} {
+      allow read:   if isAuth() && sameSchool(resource.data.schoolId);
+      allow write:  if isAdmin();
+    }
+
+    // Schools — admin only
+    match /schools/{schoolId} {
+      allow read:   if isAuth() && sameSchool(schoolId);
+      allow write:  if isAdmin();
+    }
+  }
+}
